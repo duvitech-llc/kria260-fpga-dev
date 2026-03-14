@@ -1,0 +1,16 @@
+# Vivado generated
+vivado/
+vitis_workspace/
+*.jou
+*.log
+*.str
+*.cache
+*.runs
+*.hw
+*.xpr
+*.xsa
+*.dcp
+
+# OS
+.DS_Store
+Thumbs.db
