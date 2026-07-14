@@ -66,10 +66,12 @@ static int fan_pwm_init(void)
         return status;
     }
 
+    /* Waveform output is enabled by default - the hardware bit is a
+       DISABLE, so simply not passing XTTCPS_OPTION_WAVE_DISABLE here
+       enables the wave out. */
     XTtcPs_SetOptions(&FanTtc,
                       XTTCPS_OPTION_INTERVAL_MODE |
                       XTTCPS_OPTION_MATCH_MODE |
-                      XTTCPS_OPTION_WAVE_ENABLE |
                       XTTCPS_OPTION_WAVE_POLARITY);
     XTtcPs_SetPrescaler(&FanTtc, FAN_PRESCALE);
     XTtcPs_SetInterval(&FanTtc, FAN_PERIOD);

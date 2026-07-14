@@ -43,29 +43,50 @@ if not os.path.exists(XSA):
         "Build the hardware first:  vivado -mode tcl -source tcl/build.tcl"
     )
 
-# Start from a clean workspace so the script is re-runnable.
-# The platform export contains READ-ONLY files (SDT .dtsi etc.) which
-# plain shutil.rmtree cannot delete on Windows - clear the attribute
-# and retry. A partial delete leaves a workspace Vitis refuses to open.
+# Clean workspace handling. Do NOT rmtree an openable workspace: the
+# Vitis server (started by `vitis -s` before this script runs) may hold
+# a .lock inside it, so file-level deletion races the server. Instead,
+# open it and remove stale components through the client API. Fall back
+# to rmtree only when the workspace metadata is unopenable/corrupt -
+# with a handler for the read-only files (SDT .dtsi etc.) the platform
+# export leaves behind, which plain rmtree cannot delete on Windows.
 def _clear_readonly_and_retry(func, path, _exc):
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
-if os.path.isdir(WORKSPACE):
+
+def _force_rmtree(path):
     if sys.version_info >= (3, 12):
-        shutil.rmtree(WORKSPACE, onexc=_clear_readonly_and_retry)
+        shutil.rmtree(path, onexc=_clear_readonly_and_retry)
     else:
-        shutil.rmtree(WORKSPACE, onerror=lambda f, p, e:
-                      _clear_readonly_and_retry(f, p, e))
-if os.path.isdir(WORKSPACE) and os.listdir(WORKSPACE):
-    raise RuntimeError(
-        f"Could not fully delete {WORKSPACE} - close any running Vitis/xsdb "
-        "instances holding files there and re-run."
-    )
-os.makedirs(WORKSPACE, exist_ok=True)
+        shutil.rmtree(path, onerror=_clear_readonly_and_retry)
+    if os.path.isdir(path) and os.listdir(path):
+        raise RuntimeError(
+            f"Could not fully delete {path} - close any running Vitis/xsdb "
+            "instances holding files there and re-run."
+        )
+
 
 client = vitis.create_client()
-client.set_workspace(path=WORKSPACE)
+
+opened = False
+if os.path.isdir(WORKSPACE):
+    try:
+        client.set_workspace(path=WORKSPACE)
+        opened = True
+        for comp in (APP_NAME, PFM_NAME):
+            try:
+                client.delete_component(name=comp)
+                print(f"Deleted stale component: {comp}")
+            except Exception:
+                pass
+    except Exception:
+        # Unopenable (e.g. wiped metadata) - remove and start fresh
+        _force_rmtree(WORKSPACE)
+
+if not opened:
+    os.makedirs(WORKSPACE, exist_ok=True)
+    client.set_workspace(path=WORKSPACE)
 
 # ---- Platform component (standalone BSP on A53 core 0) ----
 platform = client.create_platform_component(
@@ -95,4 +116,6 @@ app.import_files(from_loc=os.path.join(SCRIPT_DIR, "src"),
 app.build()
 
 elf = os.path.join(WORKSPACE, APP_NAME, "build", APP_NAME + ".elf")
+if not os.path.exists(elf):
+    raise RuntimeError(f"App build failed - {elf} was not produced")
 print(f"Done. ELF: {elf}")
