@@ -5,10 +5,11 @@
 # Block Design contents:
 #   - zynq_ultra_ps_e_0     : PS (K26 SoM configuration)
 #   - rst_pl_clk0           : Synchronized reset
-#   - axi_sc_0              : SmartConnect  1SI → 2MI
+#   - axi_sc_0              : SmartConnect  1SI → 3MI
 #   - axi_bram_ctrl_0       : AXI BRAM Controller
 #   - bram_0                : Block RAM (8KB)
 #   - axi_gpio_0            : AXI GPIO 4-bit output → LEDs
+#   - axi_gpio_1            : AXI GPIO 8-bit output → PMOD J2
 # ============================================================
 
 set bd_name  "zynq_bd"
@@ -33,6 +34,9 @@ if {[llength [get_bd_cells -quiet $ps_name]] == 0} {
 # ----
 # PS Configuration – K26 SoM peripheral mapping
 # Based on KV260 Starter Kit board preset (ug1089 / XilinxBoardStore 1.4)
+#
+# Note: the AMD preset uses DDRC CWL=14, but Vivado 2026.1 validation only
+# accepts JEDEC values {12,16} for DDR4-2400 @ 1200 MHz, so CWL=16 is used.
 # ----
 set_property -dict [list \
     \
@@ -41,11 +45,17 @@ set_property -dict [list \
     CONFIG.PSU__DDRC__DRAM_WIDTH               {16 Bits}               \
     CONFIG.PSU__DDRC__BUS_WIDTH                {64 Bit}                \
     CONFIG.PSU__DDRC__ROW_ADDR_COUNT           {16}                    \
+    CONFIG.PSU__DDRC__BG_ADDR_COUNT            {1}                     \
     CONFIG.PSU__DDRC__SPEED_BIN                {DDR4_2400R}            \
     CONFIG.PSU__DDRC__ECC                      {Disabled}              \
     CONFIG.PSU__DDRC__VREF                     {1}                     \
     CONFIG.PSU__DDRC__CL                       {16}                    \
-    CONFIG.PSU__DDRC__CWL                      {14}                    \
+    CONFIG.PSU__DDRC__CWL                      {16}                    \
+    CONFIG.PSU__DDRC__T_RCD                    {16}                    \
+    CONFIG.PSU__DDRC__T_RP                     {16}                    \
+    CONFIG.PSU__DDRC__T_RC                     {47.06}                 \
+    CONFIG.PSU__DDRC__T_RAS_MIN                {33}                    \
+    CONFIG.PSU__DDRC__T_FAW                    {30.0}                  \
     CONFIG.PSU__DDRC__DM_DBI                   {DM_NO_DBI}             \
     \
     CONFIG.PSU__QSPI__PERIPHERAL__ENABLE       {1}                     \
@@ -84,6 +94,7 @@ set_property -dict [list \
     CONFIG.PSU__ENET3__GRP_MDIO__IO            {MIO 76 .. 77}          \
     \
     CONFIG.PSU__DISPLAYPORT__PERIPHERAL__ENABLE {1}                    \
+    CONFIG.PSU__DP__LANE_SEL                    {Dual Lower}           \
     CONFIG.PSU__DISPLAYPORT__LANE0__ENABLE      {1}                    \
     CONFIG.PSU__DISPLAYPORT__LANE0__IO          {GT Lane1}             \
     CONFIG.PSU__DISPLAYPORT__LANE1__ENABLE      {1}                    \
@@ -150,10 +161,10 @@ connect_bd_net \
     [get_bd_pins $rst_name/ext_reset_in]
 
 # ----
-# SmartConnect  1SI → 2MI  (M_AXI_HPM0_LPD master)
+# SmartConnect  1SI → 3MI  (M_AXI_HPM0_LPD master)
 # ----
 create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axi_sc_0
-set_property CONFIG.NUM_MI 2 [get_bd_cells axi_sc_0]
+set_property CONFIG.NUM_MI 3 [get_bd_cells axi_sc_0]
 set_property CONFIG.NUM_SI 1 [get_bd_cells axi_sc_0]
 
 # ----
@@ -178,6 +189,16 @@ set_property -dict [list \
 ] [get_bd_cells axi_gpio_0]
 
 # ----
+# AXI GPIO – 8-bit pure output → PMOD connector J2
+# pmod[0..3] = PMOD top row (pins 1-4), pmod[4..7] = bottom row (pins 7-10)
+# ----
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_1
+set_property -dict [list \
+    CONFIG.C_GPIO_WIDTH  8 \
+    CONFIG.C_ALL_OUTPUTS 1 \
+] [get_bd_cells axi_gpio_1]
+
+# ----
 # AXI interface connections
 # ----
 connect_bd_intf_net \
@@ -193,6 +214,10 @@ connect_bd_intf_net \
     [get_bd_intf_pins axi_gpio_0/S_AXI]
 
 connect_bd_intf_net \
+    [get_bd_intf_pins axi_sc_0/M02_AXI] \
+    [get_bd_intf_pins axi_gpio_1/S_AXI]
+
+connect_bd_intf_net \
     [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] \
     [get_bd_intf_pins bram_0/BRAM_PORTA]
 
@@ -204,7 +229,8 @@ connect_bd_net \
     [get_bd_pins $ps_name/maxihpm0_lpd_aclk] \
     [get_bd_pins axi_sc_0/aclk] \
     [get_bd_pins axi_bram_ctrl_0/s_axi_aclk] \
-    [get_bd_pins axi_gpio_0/s_axi_aclk]
+    [get_bd_pins axi_gpio_0/s_axi_aclk] \
+    [get_bd_pins axi_gpio_1/s_axi_aclk]
 
 # ----
 # Reset – synchronized peripheral reset
@@ -213,17 +239,27 @@ connect_bd_net \
     [get_bd_pins $rst_name/peripheral_aresetn] \
     [get_bd_pins axi_sc_0/aresetn] \
     [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn] \
-    [get_bd_pins axi_gpio_0/s_axi_aresetn]
+    [get_bd_pins axi_gpio_0/s_axi_aresetn] \
+    [get_bd_pins axi_gpio_1/s_axi_aresetn]
 
 # ----
-# Export GPIO output port to top level
+# Export GPIO output ports to top level
 # (output only – no gpio_io_i since C_ALL_OUTPUTS=1)
 # ----
 make_bd_pins_external [get_bd_pins axi_gpio_0/gpio_io_o]
 
+create_bd_port -dir O -from 7 -to 0 pmod_gpio_o
+connect_bd_net [get_bd_pins axi_gpio_1/gpio_io_o] [get_bd_ports pmod_gpio_o]
+
 # ----
-# Address map – MUST be called after all AXI slaves are instantiated
+# Address map – fixed offsets so bare-metal code can hardcode them.
+# M_AXI_HPM0_LPD window starts at 0x8000_0000.
 # ----
+assign_bd_address -offset 0x80000000 -range 0x2000  [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0]
+assign_bd_address -offset 0x80010000 -range 0x10000 [get_bd_addr_segs axi_gpio_0/S_AXI/Reg]
+assign_bd_address -offset 0x80020000 -range 0x10000 [get_bd_addr_segs axi_gpio_1/S_AXI/Reg]
+
+# Catch anything left unassigned
 assign_bd_address
 
 # ----

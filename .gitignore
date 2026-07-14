@@ -1,6 +1,13 @@
 # Vivado generated
 vivado/
 vitis_workspace/
+
+# Vitis generated
+sw/workspace/
+sw/*.log
+sw/*.err
+sw/.Xil/
+BOOT.BIN
 *.jou
 *.log
 *.str
@@ -10,6 +17,7 @@ vitis_workspace/
 *.xpr
 *.xsa
 *.dcp
+*.dmp
 
 # OS
 .DS_Store

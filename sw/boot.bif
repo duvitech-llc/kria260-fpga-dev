@@ -1,0 +1,18 @@
+// bootgen image description for a self-booting bare-metal image:
+//   FSBL (A53) -> PL bitstream -> application
+//
+// Paths assume the default Vitis workspace C:\kv260_ws created by
+// create_vitis.py (adjust if you set VITIS_WORKSPACE).
+//
+// Generate BOOT.BIN from the sw/ directory:
+//   bootgen -arch zynqmp -image boot.bif -o BOOT.BIN -w on
+//
+// Note: the KV260 SOM boots from its onboard QSPI. Writing a custom
+// BOOT.BIN to QSPI replaces the Kria boot firmware - prefer the JTAG
+// flow (run_jtag.tcl) during development.
+the_ROM_image:
+{
+    [bootloader, destination_cpu=a53-0] C:/kv260_ws/kv260_pfm/export/kv260_pfm/sw/boot/fsbl.elf
+    [destination_device=pl] ../vivado/kv260_base.runs/impl_1/top.bit
+    [destination_cpu=a53-0] C:/kv260_ws/pmod_gpio/build/pmod_gpio.elf
+}

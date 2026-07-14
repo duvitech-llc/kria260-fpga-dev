@@ -10,7 +10,7 @@
 ###############################################################################
 
 ###############################################################################
-# User LEDs (Bank 46, LVCMOS33, Active-HIGH)
+# User LEDs (Bank 45, LVCMOS33, Active-HIGH)
 #
 # Carrier net → SoM connector → K26 package pin mapping:
 #   DS5 (LED0) : leds_4bits_tri_o[1] → som240_1_b17 → J10
@@ -48,12 +48,34 @@ set_property SLEW SLOW           [get_ports {leds[*]}]
 ###############################################################################
 
 ###############################################################################
-# Raspberry Pi 40-pin Header (J2) – Bank 45, LVCMOS33
-# Uncomment and adjust if connecting PL logic to this expansion header.
-# Pin mappings depend on SoM/carrier revision; verify against UG1089 Table 28.
+# PMOD Connector J2 (Bank 45, LVCMOS33)
+#
+# 12-pin PMOD: pins 1-4 = top-row I/O, 7-10 = bottom-row I/O,
+# pins 5/11 = GND, pins 6/12 = 3V3.
+#
+# Port index → PMOD physical pin → HDA net → K26 package pin
+# (mapping verified against Xilinx/Kria-PYNQ kv260 base.xdc):
+#   pmod[0] : pin 1  → HDA11 → H12
+#   pmod[1] : pin 2  → HDA12 → E10
+#   pmod[2] : pin 3  → HDA13 → D10
+#   pmod[3] : pin 4  → HDA14 → C11
+#   pmod[4] : pin 7  → HDA15 → B10
+#   pmod[5] : pin 8  → HDA16 → E12
+#   pmod[6] : pin 9  → HDA17 → D11
+#   pmod[7] : pin 10 → HDA18 → B11
 ###############################################################################
-# set_property PACKAGE_PIN ... [get_ports rpi_io[*]]
-# set_property IOSTANDARD LVCMOS33 [get_ports rpi_io[*]]
+set_property PACKAGE_PIN H12 [get_ports {pmod[0]}]  ;# PMOD pin 1
+set_property PACKAGE_PIN E10 [get_ports {pmod[1]}]  ;# PMOD pin 2
+set_property PACKAGE_PIN D10 [get_ports {pmod[2]}]  ;# PMOD pin 3
+set_property PACKAGE_PIN C11 [get_ports {pmod[3]}]  ;# PMOD pin 4
+set_property PACKAGE_PIN B10 [get_ports {pmod[4]}]  ;# PMOD pin 7
+set_property PACKAGE_PIN E12 [get_ports {pmod[5]}]  ;# PMOD pin 8
+set_property PACKAGE_PIN D11 [get_ports {pmod[6]}]  ;# PMOD pin 9
+set_property PACKAGE_PIN B11 [get_ports {pmod[7]}]  ;# PMOD pin 10
+
+set_property IOSTANDARD LVCMOS33 [get_ports {pmod[*]}]
+set_property DRIVE 4             [get_ports {pmod[*]}]
+set_property SLEW SLOW           [get_ports {pmod[*]}]
 
 ###############################################################################
 # IAS Camera Connector (J3/J4) – HP banks, MIPI DPHY
