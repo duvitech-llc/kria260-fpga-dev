@@ -22,6 +22,8 @@
 
 import os
 import shutil
+import stat
+import sys
 import vitis
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,8 +43,25 @@ if not os.path.exists(XSA):
         "Build the hardware first:  vivado -mode tcl -source tcl/build.tcl"
     )
 
-# Start from a clean workspace so the script is re-runnable
-shutil.rmtree(WORKSPACE, ignore_errors=True)
+# Start from a clean workspace so the script is re-runnable.
+# The platform export contains READ-ONLY files (SDT .dtsi etc.) which
+# plain shutil.rmtree cannot delete on Windows - clear the attribute
+# and retry. A partial delete leaves a workspace Vitis refuses to open.
+def _clear_readonly_and_retry(func, path, _exc):
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+if os.path.isdir(WORKSPACE):
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(WORKSPACE, onexc=_clear_readonly_and_retry)
+    else:
+        shutil.rmtree(WORKSPACE, onerror=lambda f, p, e:
+                      _clear_readonly_and_retry(f, p, e))
+if os.path.isdir(WORKSPACE) and os.listdir(WORKSPACE):
+    raise RuntimeError(
+        f"Could not fully delete {WORKSPACE} - close any running Vitis/xsdb "
+        "instances holding files there and re-run."
+    )
 os.makedirs(WORKSPACE, exist_ok=True)
 
 client = vitis.create_client()

@@ -64,4 +64,4 @@ rst -processor -clear-registers
 dow $elf
 con
 
-puts "INFO: pmod_gpio running - PMOD J2 walking-one, LEDs counting"
+puts "INFO: pmod_gpio running - PMOD J2 walking-one, fan PWM ramping"

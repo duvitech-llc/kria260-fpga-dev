@@ -2,7 +2,10 @@
 set script_dir [file dirname [file normalize [info script]]]
 set proj_dir   [file normalize [file join $script_dir ".." "vivado"]]
 
-open_project [file join $proj_dir "kv260_base.xpr"]
+# Open the project unless one is already open (e.g. sourced after create_project.tcl)
+if {[catch {current_project}]} {
+    open_project [file join $proj_dir "kv260_base.xpr"]
+}
 
 reset_run synth_1
 launch_runs synth_1 -jobs 8
