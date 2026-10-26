@@ -1,5 +1,8 @@
 # Vivado generated
 vivado/
+output/
+vivado_logs/
+.Xil/
 vitis_workspace/
 
 # Vitis generated
@@ -18,6 +21,19 @@ BOOT.BIN
 *.xsa
 *.dcp
 *.dmp
+
+# Simulation
+sim/build/
+sim/build.*.log
+obj_dir/
+*.vcd
+
+# MicroBlaze V firmware build, vendor camera firmware (not ours to redistribute)
+sw/mbv/build/
+sw/firmware/*
+!sw/firmware/get_ap1302_fw.py
+!sw/firmware/README.md
+sw/board_test/ap1302_fw.h
 
 # OS
 .DS_Store

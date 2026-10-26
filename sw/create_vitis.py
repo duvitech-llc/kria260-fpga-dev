@@ -1,13 +1,14 @@
 # ============================================================
-# Vitis 2025.2+ (Unified IDE) workspace creation script
+# Vitis Unified (2026.1) workspace creation script
 #
 # Creates:
 #   - Platform component "kv260_pfm" (standalone, A53 core 0)
 #     from the XSA exported by tcl/build.tcl
-#   - Application component "pmod_gpio" using sw/src/main.c
+#   - Application component "board_test" from sw/board_test/
 #
 # Run from the sw/ directory:
-#   vitis -s create_vitis.py
+#   vitis -s create_vitis.py        platform + application
+#   vitis -s create_vitis.py app    application only (same hardware)
 #
 # NOTE (Windows): the workspace defaults to C:\kv260_ws, NOT a
 # folder inside this repo. The standalone BSP build creates paths
@@ -16,7 +17,7 @@
 # with the VITIS_WORKSPACE environment variable if needed.
 #
 # Outputs (after build):
-#   <workspace>/pmod_gpio/build/pmod_gpio.elf
+#   <workspace>/board_test/build/board_test.elf
 #   FSBL: <workspace>/kv260_pfm/export/kv260_pfm/sw/boot/fsbl.elf
 # ============================================================
 
@@ -32,15 +33,32 @@ if os.name == "nt":
 else:
     WORKSPACE = os.environ.get("VITIS_WORKSPACE",
                                os.path.join(SCRIPT_DIR, "workspace"))
-XSA = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "vivado", "kv260_base.xsa"))
+XSA = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "output", "kv260_base.xsa"))
+SRC_DIR = os.path.join(SCRIPT_DIR, "board_test")
 
 PFM_NAME = "kv260_pfm"
-APP_NAME = "pmod_gpio"
+APP_NAME = "board_test"
+OLD_COMPONENTS = ("pmod_gpio",)   # earlier name of the app
+
+SRC_FILES = sorted(f for f in os.listdir(SRC_DIR) if f.endswith((".c", ".h")))
+
+# "vitis -s create_vitis.py app": only re-import the sources and rebuild the
+# application, on the platform already in the workspace (same hardware).
+if "app" in sys.argv[1:]:
+    client = vitis.create_client()
+    client.set_workspace(path=WORKSPACE)
+    app = client.get_component(name=APP_NAME)
+    app.import_files(from_loc=SRC_DIR, files=SRC_FILES, dest_dir_in_cmp="src")
+    app.build()
+    elf = os.path.join(WORKSPACE, APP_NAME, "build", APP_NAME + ".elf")
+    print(f"Done. ELF: {elf}")
+    vitis.dispose()
+    sys.exit(0)
 
 if not os.path.exists(XSA):
     raise FileNotFoundError(
         f"XSA not found: {XSA}\n"
-        "Build the hardware first:  vivado -mode tcl -source tcl/build.tcl"
+        "Build the hardware first:  vivado -mode batch -source tcl/build.tcl"
     )
 
 # Clean workspace handling. Do NOT rmtree an openable workspace: the
@@ -74,13 +92,18 @@ if os.path.isdir(WORKSPACE):
     try:
         client.set_workspace(path=WORKSPACE)
         opened = True
-        for comp in (APP_NAME, PFM_NAME):
+        for comp in (APP_NAME, *OLD_COMPONENTS, PFM_NAME):
             try:
                 client.delete_component(name=comp)
                 print(f"Deleted stale component: {comp}")
             except Exception:
                 pass
-    except Exception:
+    except Exception as exc:
+        if "already in use" in str(exc):
+            raise SystemExit(
+                f"The workspace {WORKSPACE} is in use by another Vitis server: close the "
+                "Vitis IDE, or stop the leftover 'vitis-server' java.exe process that an "
+                "earlier run of this script left behind, then run it again.")
         # Unopenable (e.g. wiped metadata) - remove and start fresh
         _force_rmtree(WORKSPACE)
 
@@ -110,8 +133,8 @@ app = client.create_app_component(
     platform=xpfm,
     domain="standalone_psu_cortexa53_0",
 )
-app.import_files(from_loc=os.path.join(SCRIPT_DIR, "src"),
-                 files=["main.c"],
+app.import_files(from_loc=SRC_DIR,
+                 files=SRC_FILES,
                  dest_dir_in_cmp="src")
 app.build()
 
@@ -119,3 +142,12 @@ elf = os.path.join(WORKSPACE, APP_NAME, "build", APP_NAME + ".elf")
 if not os.path.exists(elf):
     raise RuntimeError(f"App build failed - {elf} was not produced")
 print(f"Done. ELF: {elf}")
+
+# Stop the Vitis server this script started, so the workspace lock is
+# released (a server left running makes the next run fail with "workspace
+# already in use").
+try:
+    client.close()
+except Exception:
+    pass
+vitis.dispose()
