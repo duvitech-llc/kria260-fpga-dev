@@ -29,6 +29,15 @@ Verified on the board with Vivado/Vitis 2026.1 (`C:\AMDDesignTools\2026.1`):
   `ias_xshutdown_b` high. Either those cameras are not connected or need
   something else; ask the user before blaming the design. MBV: 1000 pings
   in 9.5 ms, CRC-32 of 32 KB matches (25 ms on the co-processor).
+- 2026-10-26, `irq=1 dma=1 dp=1 cam=rpi cpu=mbv`: WNS 0.54 ns, no critical
+  warnings; MBV passes with the mailbox on the PS-domain reset. CAMERA
+  skipped (no IMX219 on J9).
+- 2026-10-26, `dp=1 cam=isp cpu=mbv`: WNS 0.49 ns. **ISP camera works**:
+  AP1302 firmware loads (attempt 1 often ends with a wrong CRC, attempt 2
+  passes; the Linux driver retries the same way), CSI-2 receiver sees
+  1085 lines x 3840 bytes, data type 0x1E (YUV422 8-bit), 30 frames/s into
+  DDR, YUYV byte order (Y in even bytes). A frame copied with xsdb showed a
+  dark room. `board_test` 0 failures.
 - PS: I2C1 devices 0x2C 0x2D 0x30 0x31 0x32 0x33 0x40 0x50 0x51 0x58 0x59 0x68
   0x70 0x73; Ethernet PHY TI DP83867 (0x2000 0xA231) at MDIO 1; no SD card in
   the slot (SD test SKIPs).
@@ -60,6 +69,20 @@ Lessons from the board (all fixed in the scripts/code):
 - `XAVBuf_SetPixelClock()` assumes another PLL reference (it printed a
   3.33 GHz input) and is not used; `psu_init` sets VPLL to 74.25 MHz.
 - In the SDT BSP the timer API is `xiltimer.h` (not `xtime_l.h`).
+- Mailbox interrupt handlers (both sides) must clear the interrupt status
+  *before* emptying the FIFO; the other order lost a word as soon as the
+  camera interrupts slowed the A53 down.
+- `XVFrmbufWr_SetCallback` asserts a non-NULL reference, and a failed
+  assertion hangs the program silently (find it with xsdb `stop`, `bt`).
+  In interrupt mode the driver clears auto-restart: the done callback must
+  call `XVFrmbufWr_Start` again.
+- The camera clocking wizard must not be given an input frequency:
+  `pl_clk0` is really 99.999001 MHz and any typed value fails validation.
+- The subset converter's input widths must be set from the receiver's
+  `video_out` before its remap strings (`create_cam.tcl`).
+- `XPAR_MIPI_CSI2_RX_0_RX_CSI_LANES` is the lane-count macro in the SDT BSP.
+- Debugging a hang: `xsdb` -> `targets -set -filter {name =~ "*A53*#0"}`,
+  `stop`, `bt` gives the call stack with source lines.
 - `vitis -s create_vitis.py` leaves a `vitis-server` java.exe running, which
   locks `C:\kv260_ws` for the next run. Stop it after each run (check the
   start time; do not kill a server the user's Vitis IDE owns).

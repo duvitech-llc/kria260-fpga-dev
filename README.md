@@ -24,10 +24,11 @@ initialised before the fabric runs. `tcl/program.tcl` does that over JTAG.
 | `irq=1` | Run on the board (2026-10-26): PL timer interrupts reach the A53 through the GIC, 49-50 per 0.5 s |
 | `dma=1` | Run on the board (2026-10-26): AXI CDMA copies 1 MB in DDR through S_AXI_HP1_FPD, 0 bytes wrong, ~1.5 GB/s, completion interrupt |
 | `dp=1` | Run on the board (2026-10-26): DisplayPort link trains (2 lanes at 5.4 Gb/s), the PL pattern runs at 60 frames/s and streams at 1280x720. **The picture itself has not been checked by eye yet** |
-| `iic=1` | Run on the board (2026-10-26): TCA9546 switch at 0x74; AP1302 ISP on channel 0 answers with chip ID 0x0265. Nothing answered on J8 (IAS) or J9 (RPi camera) |
+| `iic=1` | Run on the board (2026-10-26): TCA9546 switch at 0x74; AP1302 ISP on channel 0 answers with chip ID 0x0265. Nothing answers on J8 (IAS) or J9 (RPi camera): those cameras are not detected |
 | `cpu=mbv` | Run on the board (2026-10-26): the A53 loads the MicroBlaze V program, 1000 mailbox round trips in 9.5 ms with interrupts both ways, CRC-32 of 32 KB computed by the co-processor matches the A53's |
-| `cam=rpi` | Written; being built. Needs an IMX219 camera that answers on J9 |
-| `cam=isp`, `cam=ias` | Hardware scripted (lanes, rates, pins); sensor/ISP start-up code not written yet |
+| `cam=isp` | **Verified on the board** (2026-10-26, `dp=1 cam=isp cpu=mbv`, WNS 0.49 ns): the A53 loads the AP1302 firmware over I2C (CRC checked; the first attempt sometimes fails and is retried), the AR1335 module on J7 streams 1920x1080 YUV 4:2:2 over 4 MIPI lanes at 1200 Mb/s, 30 frames/s land in DDR; a frame copied to the PC shows the (dark) room |
+| `cam=rpi` | Builds and meets timing (2026-10-26, WNS 0.54 ns at a 300 MHz video clock). Not run: no camera answers on J9 |
+| `cam=ias` | Hardware scripted (lanes, rate, pins); sensor start-up not written (no public AR1335 register set, and nothing answers on J8) |
 | PS peripherals in `board_test` | I2C1 bus scan (SoM EEPROM 0x50 and 13 other devices), Ethernet PHY (TI DP83867, MDIO address 1) PASS; SD card skipped (no card) |
 | `tcl/program.tcl` | Works: restarts the PS in JTAG boot mode, recovers a wedged debug port with a JTAG power-on reset |
 | Simulation | Verilator lint of 9 option sets, `fan_pwm` and `dp_tpg` testbenches pass |
@@ -129,11 +130,31 @@ is in the build:
 | CDMA | 1 MB DDR copy, compare, throughput |
 | DP | Monitor found, link trained, 1280x720 stream; then red, green, blue, bars, ramp and a bouncing square, each printed |
 | CAM I2C | Camera switch found, devices on each channel, ISP and sensor IDs |
-| CAMERA | `cam=rpi`: IMX219 frames into DDR, colour-bar frames identical, live frames different |
+| CAMERA | `cam=isp`: AP1302 firmware load, 1080p YUV frames into DDR at 30 frames/s, live frames different. `cam=rpi`: IMX219 frames into DDR, colour-bar frames identical, live frames different. Prints the xsdb command that copies the last frame to the PC |
 | MBV | Program loaded, "ready" received, 1000 pings, CRC-32 offload |
 | SD, I2C, ETH | PS peripherals: SD card block 0, I2C1 scan, Ethernet PHY |
 
 Then it loops: a walking one on PMOD J2 and the fan stepping every 8 s.
+
+## Cameras (`cam=`)
+
+One camera path per build, each a MIPI CSI-2 receiver feeding a frame buffer
+writer that puts frames in DDR at 0x3000_0000:
+
+| `cam=` | Connector | Lanes, rate | Format in DDR | Start-up |
+|---|---|---|---|---|
+| `isp` | J7, through the AP1302 ISP | 4 x 1200 Mb/s | YUYV, 2 bytes/pixel | AP1302 firmware loaded over I2C (fetch it first, below) |
+| `rpi` | J9 | 2 x 912 Mb/s | 8-bit Bayer, 1 byte/pixel | IMX219 registers (Linux driver values) |
+| `ias` | J8 | 4 x 880 Mb/s | 8-bit Bayer | not written |
+
+The AP1302 firmware is AMD's and is not in this repository. Fetch it once:
+
+```bash
+python -I sw/firmware/get_ap1302_fw.py     # writes sw/board_test/ap1302_fw.h (git-ignored)
+```
+
+`board_test` prints an xsdb command that copies the last frame to the PC;
+any YUV viewer (1920x1080, YUYV / YUY2) shows it.
 
 ## MicroBlaze V co-processor (`cpu=mbv`)
 

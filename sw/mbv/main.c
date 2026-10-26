@@ -125,6 +125,10 @@ __attribute__((interrupt("machine"), aligned(4))) static void trap(void)
     DBG[3] = me;
     DBG[4] = INTC_ISR;
     if (INTC_ISR & 1U) {
+        /* Clear first, then empty the FIFO: a word that arrives while the
+         * FIFO is being emptied then raises the interrupt again. (Clearing
+         * afterwards lost such a word on the board.) */
+        MB_IS = MB_RTA;
         while (!(MB_STATUS & MB_EMPTY)) {
             uint32_t w = MB_RDDATA;
             if (rx_n < 16U) {
@@ -132,7 +136,6 @@ __attribute__((interrupt("machine"), aligned(4))) static void trap(void)
             }
             DBG[5]++;
         }
-        MB_IS = MB_RTA;             /* clear, after the FIFO is empty */
         INTC_IAR = 1U;
         irq_count++;
     }

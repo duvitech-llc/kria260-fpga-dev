@@ -49,11 +49,13 @@ static volatile u32 rx_head, rx_tail, mb_irqs;
 static void mbox_isr(void *ref)
 {
     (void)ref;
+    /* Clear first, then empty the FIFO, so a word arriving meanwhile raises
+     * the interrupt again instead of being stranded. */
+    Xil_Out32(MBV_MBOX_BASE + MB_IS, MB_RTA);
     while (!(Xil_In32(MBV_MBOX_BASE + MB_STATUS) & MB_EMPTY)) {
         rxq[rx_head & 63U] = Xil_In32(MBV_MBOX_BASE + MB_RDDATA);
         rx_head++;
     }
-    Xil_Out32(MBV_MBOX_BASE + MB_IS, MB_RTA);
     mb_irqs++;
 }
 

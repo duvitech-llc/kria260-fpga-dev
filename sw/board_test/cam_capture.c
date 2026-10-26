@@ -100,10 +100,13 @@ static int imx219_setup(int test_pattern)
 }
 
 /* ---- capture path ---------------------------------------------------------- */
+/* Frame written. In interrupt mode the driver turns the core's auto-restart
+ * off, so each frame is started from here (found on the board: without it
+ * exactly one frame was captured). */
 static void fb_done(void *ref)
 {
-    (void)ref;
     frames++;
+    XVFrmbufWr_Start((XV_FrmbufWr_l2 *)ref);
 }
 
 static u32 frame_crc(void)
@@ -128,6 +131,7 @@ static int capture_start(XVidC_ColorFormat mem, XVidC_ColorFormat strm, u32 stri
         xil_printf("  CSI-2 receiver: no configuration\r\n");
         return -1;
     }
+    xil_printf("  CSI-2 receiver found, %d lanes\r\n", CAM_CSI_LANES);
     XCsiSs_Configure(&csi, CAM_CSI_LANES, 0);
     XCsiSs_Activate(&csi, XCSI_ENABLE);
 
@@ -146,13 +150,38 @@ static int capture_start(XVidC_ColorFormat mem, XVidC_ColorFormat strm, u32 stri
         xil_printf("  frame buffer writer: format not accepted\r\n");
         return -1;
     }
-    XVFrmbufWr_SetCallback(&fb, XVFRMBUFWR_HANDLER_DONE, (void *)fb_done, NULL);
+    /* The driver asserts a non-NULL callback reference (an assertion
+     * failure hangs the program): pass the instance. */
+    XVFrmbufWr_SetCallback(&fb, XVFRMBUFWR_HANDLER_DONE, (void *)fb_done, &fb);
     if (irq_attach(IRQ_CAM_FB, XVFrmbufWr_InterruptHandler, &fb, 0) != XST_SUCCESS) {
         return -1;
     }
     XVFrmbufWr_InterruptEnable(&fb, XVFRMBUFWR_IRQ_DONE_MASK);
     XVFrmbufWr_Start(&fb);
+    xil_printf("  frame buffer writer started at 0x%08lx\r\n", (u32)CAM_FB_ADDR);
     return 0;
+}
+
+/* CSI-2 receiver registers (PG232): controller at the base, D-PHY at +0x1000. */
+static void csi_dump(void)
+{
+    static const struct { u32 off; const char *name; } r[] = {
+        { 0x00, "core config" }, { 0x04, "protocol config" }, { 0x10, "core status" },
+        { 0x24, "interrupt status" }, { 0x30, "generic short packet" },
+        { 0x3C, "clock lane info" }, { 0x40, "lane 0 info" }, { 0x44, "lane 1 info" },
+        { 0x48, "lane 2 info" }, { 0x4C, "lane 3 info" },
+        { 0x60, "VC0 image info 1 (lines, bytes)" }, { 0x64, "VC0 image info 2 (data type)" },
+        { 0x1000, "D-PHY control" }, { 0x1008, "D-PHY init" }, { 0x1018, "D-PHY HS timeout" },
+        { 0x1024, "D-PHY status" }, { 0x1030, "D-PHY clock lane status" },
+        { 0x1040, "D-PHY lane 0 status" }, { 0x1044, "D-PHY lane 1 status" },
+        { 0x1048, "D-PHY lane 2 status" }, { 0x104C, "D-PHY lane 3 status" },
+    };
+    u32 i;
+
+    for (i = 0; i < sizeof(r) / sizeof(r[0]); i++) {
+        xil_printf("    CSI +0x%04lx %-32s 0x%08lx\r\n", r[i].off, r[i].name, Xil_In32(CAM_CSI_BASE + r[i].off));
+    }
+    xil_printf("    frame buffer control 0x%08lx\r\n", Xil_In32(CAM_FB_BASE));
 }
 
 static u32 count_frames(u32 ms)
@@ -190,8 +219,7 @@ static void test_isp_capture(void)
     c2 = frame_crc();
     xil_printf("  AP1302 1920x1080 YUV 4:2:2: %lu frames in 1 s, CRCs 0x%08lx 0x%08lx\r\n", n, c1, c2);
     if (n == 0U) {
-        XCsiSs_GetLaneInfo(&csi);
-        XCsiSs_ReportCoreInfo(&csi);
+        csi_dump();
     }
     result("CAMERA", n >= 10U && c1 != c2);
     xil_printf("  last frame: %u x %u YUYV (2 bytes per pixel) at 0x%08lx; copy it with\r\n",
@@ -237,8 +265,7 @@ void test_cam_capture(void)
     n = count_frames(1000);
     xil_printf("  IMX219 1920x1080 RAW10 colour bars: %lu frames in 1 s\r\n", n);
     if (n < 25U) {
-        XCsiSs_GetLaneInfo(&csi);
-        XCsiSs_ReportCoreInfo(&csi);
+        csi_dump();
         result("CAMERA", 0);
         return;
     }

@@ -116,36 +116,41 @@ int ap1302_start(void)
     const u16 crc_want = (u16)(ap1302_fw[2] | (ap1302_fw[3] << 8));
     const u8 *boot = &ap1302_fw[4];
     const u32 boot_len = AP1302_FW_SIZE - 4U;
-    u16 id, crc;
-    u32 t3;
-
-    /* Reset with the sensor powered; standby off. */
-    cam_ctrl(CAM_RPI_EN | CAM_IAS_XSHUT_B);
-    usleep(10000);
-    cam_ctrl(CAM_RPI_EN | CAM_IAS_XSHUT_B | CAM_AP1302_RST_B);
-    usleep(20000);
-    cam_mux_select(0);
-    if (r16(AP1302_CHIP_ID, &id) != 0 || id != 0x0265) {
-        xil_printf("  AP1302 not found (ID 0x%04x)\r\n", id);
-        return -1;
-    }
+    u16 id = 0, crc = 0;
+    u32 t3, attempt;
 
     xil_printf("  loading AP1302 firmware: %u bytes, PLL part %lu, CRC 0x%04x\r\n",
                AP1302_FW_SIZE, pll, crc_want);
-    win_pos = 0;
-    if (w16(AP1302_SIP_CRC, 0xFFFF) || write_window(boot, pll) ||
-        w16(AP1302_BOOTDATA_STAGE, 0x0002)) {
-        xil_printf("  I2C error during the PLL part\r\n");
-        return -1;
+    /* Like the Linux driver: up to three attempts, reset in between. */
+    for (attempt = 1; attempt <= 3U; attempt++) {
+        /* Reset with the sensor powered; standby off. */
+        cam_ctrl(CAM_RPI_EN | CAM_IAS_XSHUT_B);
+        usleep(10000);
+        cam_ctrl(CAM_RPI_EN | CAM_IAS_XSHUT_B | CAM_AP1302_RST_B);
+        usleep(20000);
+        cam_mux_select(0);
+        if (r16(AP1302_CHIP_ID, &id) != 0 || id != 0x0265) {
+            xil_printf("  AP1302 not found (ID 0x%04x)\r\n", id);
+            return -1;
+        }
+        win_pos = 0;
+        if (w16(AP1302_SIP_CRC, 0xFFFF) || write_window(boot, pll) ||
+            w16(AP1302_BOOTDATA_STAGE, 0x0002)) {
+            xil_printf("  attempt %lu: I2C error during the PLL part\r\n", attempt);
+            continue;
+        }
+        usleep(10000);                          /* PLL lock (driver: 1-2 ms) */
+        if (write_window(boot + pll, boot_len - pll)) {
+            xil_printf("  attempt %lu: I2C error during the download\r\n", attempt);
+            continue;
+        }
+        usleep(40000);
+        if (r16(AP1302_SIP_CRC, &crc) == 0 && crc == crc_want) {
+            break;
+        }
+        xil_printf("  attempt %lu: firmware CRC 0x%04x, expected 0x%04x\r\n", attempt, crc, crc_want);
     }
-    usleep(2000);
-    if (write_window(boot + pll, boot_len - pll)) {
-        xil_printf("  I2C error during the firmware download\r\n");
-        return -1;
-    }
-    usleep(40000);
-    if (r16(AP1302_SIP_CRC, &crc) || crc != crc_want) {
-        xil_printf("  firmware CRC 0x%04x, expected 0x%04x\r\n", crc, crc_want);
+    if (attempt > 3U) {
         return -1;
     }
     w16(AP1302_BOOTDATA_STAGE, 0xFFFF);
