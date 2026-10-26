@@ -9,10 +9,10 @@
 //
 // Note: the KV260 SOM boots from its onboard QSPI. Writing a custom
 // BOOT.BIN to QSPI replaces the Kria boot firmware - prefer the JTAG
-// flow (run_jtag.tcl) during development.
+// flow (tcl/program.tcl) during development.
 the_ROM_image:
 {
     [bootloader, destination_cpu=a53-0] C:/kv260_ws/kv260_pfm/export/kv260_pfm/sw/boot/fsbl.elf
-    [destination_device=pl] ../vivado/kv260_base.runs/impl_1/top.bit
-    [destination_cpu=a53-0] C:/kv260_ws/pmod_gpio/build/pmod_gpio.elf
+    [destination_device=pl] ../output/kv260_base.bit
+    [destination_cpu=a53-0] C:/kv260_ws/board_test/build/board_test.elf
 }

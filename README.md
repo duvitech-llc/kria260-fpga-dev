@@ -1,260 +1,211 @@
 # KV260 FPGA Base Project
 
-Target board: AMD/Xilinx Kria KV260 Vision AI Starter Kit  
-SoM: K26 (XCK26-SFVC784-2LV-C)  
-Carrier: KV260 Carrier Card  
+Target board: AMD Kria KV260 Vision AI Starter Kit
+SoM: K26 (Vivado part `xck26-sfvc784-2LV-c`, Zynq UltraScale+ MPSoC EV)
+Tools: Vivado / Vitis 2026.1
 
-## Overview
+A script-built Vivado project for the whole KV260 carrier, organised like
+`ax7a200b-fpga-dev`: one top-level `src/rtl/top.v`, build options chosen with
+`key=value` words, one constraint file per option, a single bare-metal test
+program for the A53, a MicroBlaze V (RISC-V) co-processor in the fabric, and
+simulation without Vivado.
 
-This project establishes a minimal but functional PL base design for the KV260 that proves out the PS↔PL path. It uses:
+The KV260 differs from a plain FPGA board in one way that shapes everything:
+**the PL has no clock of its own.** Every fabric clock comes from the
+processing system (PS), so the PS is part of every design and must be
+initialised before the fabric runs. `tcl/program.tcl` does that over JTAG.
 
-- **SmartConnect** (Vivado 2025+, replaces deprecated AXI Interconnect)
-- **AXI GPIO** driven from `M_AXI_HPM0_LPD` for 8 GPIO outputs on the PMOD connector J2
-- **AXI BRAM Controller + BRAM** for a simple PS↔PL memory-mapped scratch space
-- **Fan PWM**: PS TTC0 waveform out via EMIO → `fan_en_b` (A12), same as the official Kria platforms
-- PL clock sourced from PS `pl_clk0` — no external PL oscillator pin on KV260
+## Status
 
-## Key Differences vs AXU2CGB
-
-| Feature | AXU2CGB | KV260 |
-|---------|---------|-------|
-| Part | XCZU2CG-SFVC784-1-E | XCK26-SFVC784-2LV-C |
-| DDR4 | 4 Gb, MIG config | 8 Gb, 16-bit x4 |
-| PL Ref Clock | External 25 MHz on pin AB11 | PS pl_clk0 (no PL pin needed) |
-| PL LEDs | 4× active-low, Bank 24 | None — no PL user LEDs on KV260 |
-| PL Buttons | 4× active-low on PL | None — use PS GPIO MIO |
-| Fan PWM | PL pin W12 | PL pin A12 (`fan_en_b`, active-low) via TTC0 EMIO |
-| UART1 | MIO 24..25 | MIO 36..37 |
-| USB3.0 GT Lane | GT Lane1 | GT Lane2 |
-| DisplayPort | Lane0=GT Lane0 | Lane0=GT Lane1, Lane1=GT Lane0 |
-
----
-
-## Create Project
-
-In Windows open a TCL shell. In Linux, source the Vivado environment first:
-
-```bash
-source /tools/Xilinx/Vivado/2025.2/settings64.sh
-```
-
-Then create the Vivado project:
-
-```bash
-vivado -mode tcl -source tcl/create_project.tcl
-```
-
-## Build Bitstream
-
-```bash
-vivado -mode tcl -source tcl/build.tcl
-```
-
----
-
-# Bring-Up Notes (Vivado/Vitis 2025.2)
-
-## 1. Hardware / Tooling
-
-- Board: **Kria KV260 Vision AI Starter Kit**
-- SoM: **K26** (XCK26-SFVC784-2LV-C, Zynq UltraScale+ EV)
-- Tools: **Vivado 2026.1** / **Vitis 2026.1** (validated; scripts are not version-pinned)
-- PL I/O used by this design:
-  - `pmod[7:0]` – PMOD connector J2 (8 I/O, LVCMOS33)
-  - `fan_en_b` – fan enable A12, active-low (HIGH = fan off), PWM from PS TTC0
-
----
-
-## 2. Constraints (XDC)
-
-XDC file: `xdc/kv260_base.xdc`
-
-> **No PL user LEDs on KV260.** An earlier revision of this project constrained J10/K13/F11/A12 as "LEDs DS5–DS8" — those pins are actually (per the official kria-vitis-platforms / Kria-PYNQ designs): J10 = `ap1302_standby` (ISP), J11 = `ap1302_rst_b` (ISP), F11 = `cam_gpio`, A12 = `fan_en_b`. Driving them as LEDs toggles the ISP and the fan.
-
-**Fan Enable (Bank 45, LVCMOS33):**
-
-| Port | Carrier Net | SoM Connector | Package Pin | Polarity |
-|------|-------------|---------------|-------------|----------|
-| fan_en_b | HDA20 → Q20 gate | som240_1_c24 | A12 | HIGH = fan OFF, LOW/float = fan ON |
-
-**PMOD J2 Package Pins (Bank 45, LVCMOS33):**
-
-| Port | PMOD Pin (Digilent) | Schematic Pin (J2) | Carrier Net | Package Pin |
-|------|--------------------|--------------------|-------------|-------------|
-| pmod[0] | 1 (top row) | 1 | PMOD_HDA11 | H12 |
-| pmod[1] | 2 | 3 | PMOD_HDA12 | E10 |
-| pmod[2] | 3 | 5 | PMOD_HDA13 | D10 |
-| pmod[3] | 4 | 7 | PMOD_HDA14 | C11 |
-| pmod[4] | 7 (bottom row) | 2 | PMOD_HDA15 | B10 |
-| pmod[5] | 8 | 4 | PMOD_HDA16_CC | E12 |
-| pmod[6] | 9 | 6 | PMOD_HDA17 | D11 |
-| pmod[7] | 10 | 8 | PMOD_HDA18 | B11 |
-
-Two numbering schemes for the same connector: Digilent PMOD convention (top row 1–6, bottom row 7–12; GND = 5/11, 3V3 = 6/12) vs. the carrier schematic's zigzag header numbering (odd = top-row I/O, even = bottom-row I/O; GND = 9/10, 3V3 = 11/12). `pmod[5]` (HDA16_CC) is clock-capable. PMOD 3V3 is switched through a TPS22948 current-limited load switch (U42). Mapping verified against the official [Kria-PYNQ base.xdc](https://github.com/Xilinx/Kria-PYNQ/blob/main/kv260/base/vivado/constraints/base.xdc) and the carrier schematic.
-
-> **Note:** The KV260 does NOT have dedicated PL push buttons. The carrier's push button connects to PS GPIO (MIO). If you need button-driven PL logic, read via AXI GPIO from the MIO side or use the PMOD / IAS expansion connectors. (The Raspberry Pi 40-pin header exists on the KR260, not the KV260.)
-
-If you see:
-```text
-[Common 17-55] 'set_property' expects at least one object.
-```
-a constraint is referencing a port not declared in `top.v`. Comment out or remove those lines.
-
----
-
-## 3. Block Design Overview (`zynq_bd`)
-
-| IP Instance | Type | Description |
-|---|---|---|
-| `zynq_ultra_ps_e_0` | PS | Zynq MPSoC PS (K26 SoM) |
-| `rst_pl_clk0` | proc_sys_reset | Synchronized reset from pl_resetn0 |
-| `axi_sc_0` | SmartConnect | 1 master → 2 slaves |
-| `axi_bram_ctrl_0` | AXI BRAM Controller | PS↔PL scratch memory |
-| `bram_0` | Block Memory Generator | 8KB RAM |
-| `axi_gpio_0` | AXI GPIO | 8-bit output → PMOD J2 |
-| `fan_slice` | xlslice | TTC0 EMIO wave_out[0] → `fan_en_b` |
-
-### 3.1 AXI Connections
-
-```
-ps/M_AXI_HPM0_LPD  →  axi_sc_0/S00_AXI
-axi_sc_0/M00_AXI   →  axi_bram_ctrl_0/S_AXI
-axi_sc_0/M01_AXI   →  axi_gpio_0/S_AXI
-axi_bram_ctrl_0/BRAM_PORTA  ↔  bram_0/BRAM_PORTA
-ps/emio_ttc0_wave_o[0]  →  fan_slice  →  fan_en_b (A12)
-```
-
-### 3.2 Address Map (fixed in `create_bd.tcl`)
-
-| Slave | Base Address | Range | Function |
-|-------|-------------|-------|----------|
-| `axi_bram_ctrl_0` | `0x8000_0000` | 8K | Scratch BRAM |
-| `axi_gpio_0` | `0x8001_0000` | 64K | PMOD J2 |
-
-Addresses are assigned explicitly with `assign_bd_address -offset`, so bare-metal code can hardcode them (see `sw/src/main.c`). The fan is not AXI-mapped — it is TTC0 channel 0 in the PS (`0xFF11_0000`), driven with the `xttcps` driver.
-
-### 3.3 GPIO Register Interface
-
-The AXI GPIO core is **pure output** (`C_ALL_OUTPUTS=1`). Channel-1 registers (PG144):
-
-| Offset | Register | Notes |
-|--------|----------|-------|
-| `0x0000` | GPIO_DATA | Write output value |
-| `0x0004` | GPIO_TRI | 0 = output (no-op when C_ALL_OUTPUTS=1) |
-
-Example (bare-metal, A53):
-```c
-Xil_Out32(0x80010000 + 0x4, 0x00); // PMOD: direction = output
-Xil_Out32(0x80010000 + 0x0, 0x55); // Drive PMOD pins 1,3,7,9 high
-```
-
-### 3.4 Fan PWM (TTC0 → EMIO → A12)
-
-The carrier fan circuit (UG1089 / carrier schematic): HDA20 drives Q20, which
-gates Q18, the fan's low-side switch. **Polarity is inverted** — `fan_en_b`
-HIGH turns the fan OFF; LOW or floating runs it (failsafe while the PL is
-unconfigured or the TTC idle).
-
-Software PWM via `xttcps` (see [main.c](sw/src/main.c)):
-- TTC0 ch0, interval mode + match mode + waveform out, `WAVE_POLARITY` set
-  → output HIGH from interval start until match, LOW to rollover
-- fan power % = LOW fraction → `match = period * (100 - percent) / 100`
-- ~100 Hz PWM. Keep it slow: Q18's gate is fed through a 10k pull-up
-  (≈5 µs edges), so 25 kHz-class PWM would be badly distorted.
-- Plain on/off "GPIO" behavior = 0% / 100% duty.
-
----
-
-## 4. Top-Level RTL (`top.v`)
-
-The top module connects the PMOD GPIO and fan enable to the block design outputs.
-
-```
-top.v
- └─ zynq_bd_wrapper (generated by Vivado)
-     ├─ axi_gpio_0/gpio_io_o     → pmod_gpio_o[7:0] → pmod[7:0]
-     └─ ps/emio_ttc0_wave_o[0]   → fan_en_b         → A12 (fan)
-```
-
-No push-button port — the KV260 push button connects to PS GPIO MIO.
-
----
-
-## 4b. Bare-Metal Software (`sw/`)
-
-| File | Purpose |
-|------|---------|
-| `sw/src/main.c` | Standalone A53 app: walking-one on PMOD, fan PWM ramp via TTC0 |
-| `sw/create_vitis.py` | Creates the Vitis 2025.2 platform + app components |
-| `sw/run_jtag.tcl` | xsdb script: configure PL, psu_init, download & run ELF |
-| `sw/boot.bif` | bootgen image description (FSBL + bitstream + app) |
-
-### Build flow
-
-```bash
-# 1. Hardware: bitstream + XSA
-vivado -mode tcl -source tcl/create_project.tcl
-vivado -mode tcl -source tcl/build.tcl        # writes vivado/kv260_base.xsa
-
-# 2. Software: platform + app (from sw/)
-cd sw
-vitis -s create_vitis.py                      # builds C:\kv260_ws\pmod_gpio\build\pmod_gpio.elf
-
-# 3. Run over JTAG (board powered, USB J4 connected)
-xsdb run_jtag.tcl
-```
-
-> **Windows workspace location:** the Vitis workspace defaults to `C:\kv260_ws` (override with the `VITIS_WORKSPACE` env var). It cannot live inside this repo on Windows — the standalone BSP build creates ~180-char-deep paths and hits the 260-char MAX_PATH limit under a long repo path.
-
-`run_jtag.tcl` does the full bare-metal bring-up: halts the PSU, loads the bitstream into the PL (`fpga`), runs `psu_init` (clocks/DDR/MIO from this design), removes PS↔PL isolation, then downloads and starts the ELF on A53 core 0. UART console is the second FTDI COM port at 115200 8N1.
-
-Expected behavior: a single high pin walks across PMOD J2 pins 1→2→3→4→7→8→9→10 (3.3V logic) at 4 steps/second, while the fan steps 100% → 75% → 50% → 25% → 100% every 8 seconds (audible) with each change printed on the UART.
-
-> **Booting without JTAG:** `bootgen -arch zynqmp -image boot.bif -o BOOT.BIN -w on` produces a self-booting image (FSBL + bitstream + app). Note the KV260 boots from SOM QSPI — flashing a custom BOOT.BIN replaces the Kria boot firmware, so prefer JTAG during development.
-
----
-
-## 5. PS Configuration Notes (K26 SoM)
-
-The K26 SoM has fixed MIO assignments. Key peripherals enabled in `create_bd.tcl`:
-
-| Peripheral | MIO / GT Lane |
+| Part | State |
 |---|---|
-| QSPI (boot flash) | MIO 0..5 |
-| I2C1 | MIO 24..25 |
-| UART1 (console) | MIO 36..37 |
-| SD1 (MicroSD) | MIO 39..51, CD=MIO 45 |
-| USB0 | MIO 52..63 |
-| USB3.0 | GT Lane2 |
-| GEM3 (Ethernet) | MIO 64..75, MDIO=MIO 76..77 |
-| DisplayPort | Lane0=GT Lane1, Lane1=GT Lane0 |
-| PL Clock 0 | 100 MHz (IOPLL) |
-| DDR4 | 8 Gb, 1200 MHz |
+| Default build (`pmod=1 fan=ps`) | Built and run on the board (2026-10-25): WNS 6.28 ns. BRAM, PMOD read-back and fan PWM PASS; fan steps 100/75/50/25 % |
+| `fan=rtl` | Built and run (2026-10-26): with no program at all the fabric ramps the fan 100 → 75 → 50 → 25 % every 8 s (read back over JTAG); software takes over and hands back |
+| `irq=1` | Run on the board (2026-10-26): PL timer interrupts reach the A53 through the GIC, 49-50 per 0.5 s |
+| `dma=1` | Run on the board (2026-10-26): AXI CDMA copies 1 MB in DDR through S_AXI_HP1_FPD, 0 bytes wrong, ~1.5 GB/s, completion interrupt |
+| `dp=1` | Run on the board (2026-10-26): DisplayPort link trains (2 lanes at 5.4 Gb/s), the PL pattern runs at 60 frames/s and streams at 1280x720. **The picture itself has not been checked by eye yet** |
+| `iic=1` | Run on the board (2026-10-26): TCA9546 switch at 0x74; AP1302 ISP on channel 0 answers with chip ID 0x0265. Nothing answered on J8 (IAS) or J9 (RPi camera) |
+| `cpu=mbv` | Run on the board (2026-10-26): the A53 loads the MicroBlaze V program, 1000 mailbox round trips in 9.5 ms with interrupts both ways, CRC-32 of 32 KB computed by the co-processor matches the A53's |
+| `cam=rpi` | Written; being built. Needs an IMX219 camera that answers on J9 |
+| `cam=isp`, `cam=ias` | Hardware scripted (lanes, rates, pins); sensor/ISP start-up code not written yet |
+| PS peripherals in `board_test` | I2C1 bus scan (SoM EEPROM 0x50 and 13 other devices), Ethernet PHY (TI DP83867, MDIO address 1) PASS; SD card skipped (no card) |
+| `tcl/program.tcl` | Works: restarts the PS in JTAG boot mode, recovers a wedged debug port with a JTAG power-on reset |
+| Simulation | Verilator lint of 9 option sets, `fan_pwm` and `dp_tpg` testbenches pass |
 
-> The K26 SoM eMMC (SD0) is excluded here — it is managed by the SoM boot flow separately.
+`CLAUDE.md` describes how to run the tools in batch mode and what was learned
+on the way.
 
----
+## Getting started (Windows)
 
-## 6. TCL Reference
+Build the hardware in the **Vivado Tcl Shell** (Start menu), from the repo root:
 
-### Query PS cell properties
 ```tcl
-# List all PS config properties matching a keyword
-set props [report_property [get_bd_cells zynq_ultra_ps_e_0] -all]
-foreach line [split $props "\n"] {
-    if {[string match -nocase "*SD*" $line]} { puts $line }
-}
+cd C:/Users/<you>/CURRENT_WORK/duvitech/kria260-fpga-dev
+set argv {}                   ;# default options; e.g. set argv {dp=1 cpu=mbv}
+source tcl/create_project.tcl
+source tcl/build.tcl          ;# 10-20 minutes; writes output/
 ```
 
-### Find available board parts
-```tcl
-get_board_parts *kv260*
+Build the test program and run it (a **Vitis** command prompt, or any shell
+after `call <Vitis>\settings64.bat`):
+
+```bat
+python sw\mbv\build.py        :: only needed after changing sw\mbv\ (RISC-V firmware)
+cd sw
+vitis -s create_vitis.py      :: platform + app -> C:\kv260_ws\board_test\build\board_test.elf
+cd ..
+xsdb tcl\program.tcl C:/kv260_ws/board_test/build/board_test.elf
 ```
 
----
+After a change to `sw/board_test` only, `vitis -s create_vitis.py app`
+rebuilds the program in about 30 s.
 
-## 7. Docs
+Open a terminal on the **second** FTDI port of the USB cable (COM10 on the
+development PC), 115200 8N1, to see the results.
 
-Reference documentation in `docs/`:
-- `ds986-kv260-starter-kit.pdf` — KV260 Data Sheet
-- `ug1089-kv260-starter-kit.pdf` — KV260 Starter Kit User Guide (schematics, pin table)
+| Step | Last line printed |
+|---|---|
+| create_project | `INFO: Project kv260_base created in ... (cam=none cpu=none dma=0 dp=0 fan=ps iic=0 irq=0 pmod=1)` |
+| build | `INFO: Build complete. WNS = ... ns, WHS = ... ns. Bitstream: output/kv260_base.bit` (both positive) |
+| program | `INFO: Running ... on A53 #0 (console: ...)` |
+| board_test | `==== 0 failure(s) ====` |
+
+`xsdb tcl\program.tcl` without an ELF only loads the PL and initialises the
+PS, which is enough for designs whose logic runs without software
+(`fan=rtl`).
+
+## Options
+
+From a shell: `vivado -mode batch -source tcl/create_project.tcl -tclargs <options>`.
+In the Tcl Shell: `set argv {<options>}` before `source tcl/create_project.tcl`.
+
+| Option | Values | Default | Effect |
+|---|---|---|---|
+| `pmod` | `1`, `0` | `1` | PMOD J2 as 8 processor GPIO pins, direction per pin, pull-ups |
+| `fan` | `ps`, `rtl` | `ps` | Fan PWM source. `ps`: PS timer TTC0 through EMIO, software sets the speed. `rtl`: `src/rtl/common/fan_pwm.v` ramps the fan by itself; software can take over |
+| `irq` | `1`, `0` | `0` | PL timer interrupting the A53 (PL → PS interrupt) |
+| `dma` | `1`, `0` | `0` | AXI CDMA in the fabric copying DDR to DDR through a PS high-performance port |
+| `dp` | `1`, `0` | `0` | RTL 1280x720 test pattern into the PS DisplayPort controller's live-video input: J6 (DP) and J5 (HDMI) |
+| `iic` | `1`, `0` | `0` | Camera I2C (through the carrier's TCA9546 switch) and the camera control pins |
+| `cam` | `none`, `rpi`, `ias`, `isp` | `none` | MIPI CSI-2 camera capture into DDR: Raspberry Pi camera on J9, IAS module on J8, or the AP1302 ISP (J7). Turns `iic` on |
+| `cpu` | `none`, `mbv` | `none` | MicroBlaze V co-processor with 128 KB of memory loaded by the A53, a mailbox and interrupts both ways |
+| `jobs` | number | `8` | Parallel jobs (used by `build.tcl`) |
+
+Re-running `create_project.tcl` recreates `vivado/`. Every option can be
+combined with every other.
+
+## Address map (A53 view, M_AXI_HPM0_LPD)
+
+| Address | Block | Option |
+|---|---|---|
+| 0x8000_0000 | 8 KB scratch BRAM | always |
+| 0x8001_0000 | `axi_gpio_pmod` | `pmod=1` |
+| 0x8002_0000 | `axi_gpio_fan` (ch1 control, ch2 duty) | `fan=rtl` |
+| 0x8003_0000 | `axi_timer_0` | `irq=1` |
+| 0x8004_0000 | `axi_cdma_0` | `dma=1` |
+| 0x8005_0000 | `axi_gpio_dp` (ch1 pattern control, ch2 frame count) | `dp=1` |
+| 0x8006_0000 | `axi_iic_cam` | `iic=1` |
+| 0x8007_0000 | `axi_gpio_cam` (ISP reset/standby, IAS shutdown, RPi enable) | `iic=1` |
+| 0x8008_0000 | `mipi_csi2_rx_0` | `cam` |
+| 0x8009_0000 | `v_frmbuf_wr_0` | `cam` |
+| 0x800A_0000 | MicroBlaze V mailbox (A53 side) | `cpu=mbv` |
+| 0x800B_0000 | `axi_gpio_mbv` (bit 0 = run) | `cpu=mbv` |
+| 0x8010_0000 | MicroBlaze V memory, 128 KB (its address 0) | `cpu=mbv` |
+
+PL → PS interrupts: `pl_ps_irq0[n]` is GIC interrupt 121 + n. Bit 0 timer,
+1 CDMA, 2 camera I2C, 3 mailbox, 4 CSI-2 receiver, 5 frame buffer.
+
+## What `board_test` checks
+
+Each test prints PASS, FAIL or SKIP and is compiled in only when its hardware
+is in the build:
+
+| Test | What it does |
+|---|---|
+| BRAM | 8 KB written and read back |
+| PMOD | All 8 pins driven and read back; pins wired together are listed (jumpers) |
+| FAN | `fan=ps`: TTC0 PWM; `fan=rtl`: fabric duty read back, software override |
+| PL IRQ | 100 timer interrupts per second through the GIC |
+| CDMA | 1 MB DDR copy, compare, throughput |
+| DP | Monitor found, link trained, 1280x720 stream; then red, green, blue, bars, ramp and a bouncing square, each printed |
+| CAM I2C | Camera switch found, devices on each channel, ISP and sensor IDs |
+| CAMERA | `cam=rpi`: IMX219 frames into DDR, colour-bar frames identical, live frames different |
+| MBV | Program loaded, "ready" received, 1000 pings, CRC-32 offload |
+| SD, I2C, ETH | PS peripherals: SD card block 0, I2C1 scan, Ethernet PHY |
+
+Then it loops: a walking one on PMOD J2 and the fan stepping every 8 s.
+
+## MicroBlaze V co-processor (`cpu=mbv`)
+
+The co-processor is an AMD MicroBlaze V (RV32IMC) at 100 MHz with 128 KB of
+local memory. The same block RAM appears to the A53 at 0x8010_0000, so the A53
+writes the program and the data there:
+
+1. `sw/mbv/` holds the firmware: start-up code, linker script, `main.c`.
+   `python sw/mbv/build.py` compiles it with the RISC-V GCC that comes with
+   Vitis and writes `sw/board_test/mbv_fw.h`.
+2. `board_test` holds the co-processor in reset (`axi_gpio_mbv` bit 0 = 0),
+   copies the program, and releases it.
+3. They talk through the AMD mailbox: three-word commands from the A53, three-
+   word replies, an interrupt on each side.
+
+The co-processor can also be debugged over the same JTAG cable: xsdb lists it
+as "RISC-V at USER2 / Hart #0".
+
+## Programming and boot
+
+`tcl/program.tcl` is an xsdb script. It writes the PS boot-mode override
+(JTAG) and resets the PS, so the Kria boot firmware in the SoM's QSPI flash
+does not start. The override lasts until the next power cycle. The flash is
+never written; after power-off the board boots its normal firmware again.
+
+`sw/boot.bif` describes a self-booting image (FSBL + bitstream + program) for
+`bootgen`. Writing it to the SoM QSPI would replace the Kria boot firmware, so
+use JTAG during development.
+
+## Layout
+
+```
+tcl/common.tcl         board settings, options, helpers (latest_ip, force_connect)
+tcl/create_project.tcl Vivado project from scratch
+tcl/ps_config.tcl      PS configuration (DDR4, MIO, clocks, DisplayPort, AXI ports)
+tcl/create_bd.tcl      block design "system": PS, SmartConnect, AXI slaves, interrupts
+tcl/create_mbv.tcl     MicroBlaze V co-processor (cpu=mbv)
+tcl/create_cam.tcl     MIPI CSI-2 camera capture (cam=...)
+tcl/build.tcl          bitstream, XSA, psu_init.tcl, reports -> output/
+tcl/program.tcl        xsdb: PS reset in JTAG mode, PL, psu_init, optional program
+src/rtl/top.v          top level; sections per option
+src/rtl/common/        fan_pwm.v, reset_sync.v
+src/rtl/video/         dp_tpg.v (DisplayPort test pattern)
+xdc/kv260_<feature>.xdc  one constraint file per option
+sim/                   run_sim.sh (Verilator lint + Icarus testbenches), block-design stub
+sw/board_test/         the A53 bare-metal test program
+sw/mbv/                MicroBlaze V firmware and its build script
+sw/create_vitis.py     Vitis platform + board_test application
+docs/                  AMD data sheets, user guide, carrier schematics
+```
+
+## Simulation (no Vivado needed)
+
+```bash
+bash sim/run_sim.sh
+```
+
+Verilator (oss-cad-suite) lints `top.v` with every option set; Icarus Verilog
+runs the self-checking testbenches. `sim/system_stub.v` stands in for the
+block design.
+
+## Board notes
+
+- No PL oscillator, no PL LEDs, no PL push buttons. PL clocks come from the PS
+  (`pl_clk0` = 100 MHz); the camera path makes 200/300 MHz with a clocking
+  wizard, the DisplayPort pattern runs on the PS video clock (74.25 MHz).
+- Bank 45 (3.3 V): PMOD, fan, camera control, camera I2C. Bank 66 (1.2 V):
+  the three MIPI camera inputs.
+- HDMI (J5) and DisplayPort (J6) are both driven by the PS DisplayPort
+  controller (HDMI through a converter on the carrier); the PL reaches them
+  through the controller's live-video input.
+- Fan (A12) is active low: the fan runs at full speed whenever the PL is not
+  driving it.
+- Reference documents are in `docs/`: DS986 (KV260), DS987 (K26 SoM), UG1089
+  (KV260 user guide), carrier schematics (`KV260_v1`, `KV260_v2`).
